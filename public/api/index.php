@@ -125,7 +125,10 @@ try {
     $stmt = $pdo->prepare('SELECT * FROM diary_entries WHERE entry_date = ? FOR UPDATE');
     $stmt->execute([$date]);
     $row = $stmt->fetch();
-    if (($row && ($row['deleted_at'] !== null || $expected !== (int) $row['revision'])) || (!$row && $expected !== null)) {
+    // A new-entry save has no revision because deleted rows are absent from GET entries.
+    // Never let a stale editor (which supplies a revision) resurrect a deleted entry.
+    $restoring = $action === 'save' && $row && $row['deleted_at'] !== null && $expected === null;
+    if (!$restoring && (($row && ($row['deleted_at'] !== null || $expected !== (int) $row['revision'])) || (!$row && $expected !== null))) {
         $pdo->rollBack();
         fail('Запись изменилась или была удалена. Обновите страницу; ваши несохранённые поля оставлены в редакторе.', 409);
     }
@@ -136,10 +139,11 @@ try {
         $stmt->execute([$date]);
     } else {
         if ($row) {
-            archiveEntry($pdo, $row, 'edit', $admin);
-            // Retain legacy and unknown metadata omitted by an editor or older client.
-            $entry = array_replace(json_decode($row['payload'], true, 64, JSON_THROW_ON_ERROR), $entry);
-            $stmt = $pdo->prepare('UPDATE diary_entries SET payload = ?, published = ?, revision = revision + 1 WHERE entry_date = ?');
+            archiveEntry($pdo, $row, $restoring ? 'restore' : 'edit', $admin);
+            // Active edits retain omitted metadata; recreation uses the new validated payload.
+            // The old payload is preserved in history rather than leaking into the new entry.
+            if (!$restoring) $entry = array_replace(json_decode($row['payload'], true, 64, JSON_THROW_ON_ERROR), $entry);
+            $stmt = $pdo->prepare('UPDATE diary_entries SET payload = ?, published = ?, deleted_at = NULL, revision = revision + 1 WHERE entry_date = ?');
         } else {
             $stmt = $pdo->prepare('INSERT INTO diary_entries (payload, published, entry_date) VALUES (?, ?, ?)');
         }
