@@ -1,5 +1,4 @@
 'use strict';
-const KEY='nutrition-diary-v1';
 const START_DATE='2026-11-07';
 const isDiaryDate=date=>typeof date==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(date)&&date>=START_DATE;
 let entries={},revisions={},publication={},isAdmin=false,csrf='',editingRevisions={};
@@ -102,11 +101,6 @@ $('loginForm').onsubmit=async event=>{
 $('logoutBtn').onclick=async()=>{try{await request('logout',{});isAdmin=false;updateAccess();$('editor').close();entries={};render();await loadEntries();showStatus('Вы вышли из аккаунта.');}catch(error){showStatus(error.message,true)}};
 function downloadJSON(data,name){const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
 $('exportBtn').onclick=async()=>{try{downloadJSON(await request('export'),'nutrition-diary-database.json');showStatus('Резервная копия базы сохранена.')}catch(error){showStatus(error.message,true)}};
-$('exportLocalBtn').onclick=()=>{
-  try{const raw=localStorage.getItem(KEY);if(!raw){showStatus('Старых записей в этом браузере и на этом адресе нет. Для другого адреса используйте инструкцию переноса в README.');return}
-    const data=JSON.parse(raw);if(!data||typeof data!=='object'||Array.isArray(data))throw new Error('Некорректный формат старых записей.');downloadJSON({format:'nutrition-diary',version:1,entries:data},'nutrition-diary-browser.json');showStatus('Старые записи экспортированы. Исходные данные в браузере сохранены.');
-  }catch(error){showStatus(error.message,true)}
-};
 $('importBtn').onclick=()=>$('importFile').click();
 $('importFile').onchange=async()=>{
   const file=$('importFile').files[0];if(!file)return;
