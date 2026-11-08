@@ -76,4 +76,15 @@ admin.call('import',{'entries':{'2031-01-03':entry}})
 admin.call('training&date=2031-01-03',status=404)
 admin.call('import',{'entries':{'2031-01-04':entry,'2031-01-05':entry},'training':{'2031-01-04':training,'2031-01-05':{'format':'bad'}}},422)
 assert '2031-01-04' not in admin.call('entries')['entries']
+# New moving-time payloads allow pause-edge duplicates only across segment boundaries.
+moving={'format':'diary-fit','version':2,'startTime':1893499200,'summary':{'distanceKm':0.004,'movingSeconds':4,'avgSpeedKmh':3.6,'maxSpeedKmh':3.6,'avgHeartRate':130,'maxHeartRate':130,'avgPower':0,'maxPower':0},'samples':[[0,3.6,130,0,0,0],[1,3.6,130,0,0,0],[2,3.6,130,0,0,0],[2,3.6,130,0,0,1],[3,3.6,130,0,0,1],[4,3.6,130,0,0,1]],'timing':{'source':'recording-gaps','timerSeconds':4}}
+admin.call('save',{'date':'2031-01-06','entry':entry,'published':True,'revision':None,'training':moving})
+assert visitor.call('training&date=2031-01-06')['training']==moving
+assert 'elapsedSeconds' not in visitor.call('training&date=2031-01-06')['training']['summary']
+for invalid in [dict(moving,timing={'source':'recording-gaps','timerSeconds':5}),dict(moving,samples=moving['samples'][:3]+[[2,3.6,130,0,0,0]]),dict(moving,summary={**moving['summary'],'elapsedSeconds':9})]:
+    admin.call('save',{'date':'2031-01-06','entry':entry,'published':True,'revision':1,'training':invalid},422)
+assert visitor.call('training&date=2031-01-06')['training']==moving
+admin.call('import',{'entries':{'2031-01-07':entry},'training':{'2031-01-07':moving}})
+assert admin.call('export')['training']['2031-01-07']==moving
+assert admin.call('export')['training']['2031-01-01']==training # v1 backup data preserved verbatim.
 print('PASS FIT API: auth/CSRF, GPS and malformed-data rejection, draft/public read isolation, persistence/replacement/removal, old-client compatibility, soft-delete/recreate, exact training history, revisions, JSON export/import without overwrites, atomic validation.')
