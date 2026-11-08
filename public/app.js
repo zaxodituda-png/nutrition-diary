@@ -1,7 +1,9 @@
 'use strict';
 const START_DATE='2026-11-07';
 const isDiaryDate=date=>typeof date==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(date)&&date>=START_DATE;
-let entries={},revisions={},publication={},isAdmin=false,csrf='',editingRevisions={};
+let entries={},revisions={},publication={},trainingDates={},isAdmin=false,csrf='',editingRevisions={};
+let editorTraining=null,editorTrainingLoaded=false,fitWorker=null,fitReject=null,fitGeneration=0;
+const trainingCache=new Map();
 let selected=START_DATE,shownYear=2026,shownMonth=10;
 const $=id=>document.getElementById(id);const fmt=n=>Number(n).toLocaleString('ru-RU');const dateKey=(y,m,d)=>`${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
 const escapeHTML=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -29,28 +31,18 @@ function renderCalendar(){
     grid.append(button);
   }
 }
-// Extract only a validated Garmin URL; pasted markup is never rendered.
-function garminActivity(input){
-  let source=String(input||'').trim();
-  if(!source)return null;
-  if(source.startsWith('<')){
-    const doc=new DOMParser().parseFromString(source,'text/html');
-    source=doc.querySelector('iframe')?.getAttribute('src')||'';
-  }
-  try{
-    const url=new URL(source);
-    if(url.protocol!=='https:'||url.hostname!=='connect.garmin.com'||url.username||url.password||url.port)return null;
-    const match=url.pathname.match(/^\/modern\/activity\/(?:embed\/)?([1-9]\d*)\/?$/);
-    return match?match[1]:null;
-  }catch{return null}
-}
-function savedGarmin(entry){
-  // Older versions stored all activity links in this legacy field.
-  return entry.garmin??(garminActivity(entry.strava)?entry.strava:'');
-}
 function trainingHTML(entry){
-  const input=savedGarmin(entry),id=garminActivity(input);
-  return id?`<iframe loading="lazy" title="Активность Garmin Connect" referrerpolicy="strict-origin-when-cross-origin" src="https://connect.garmin.com/modern/activity/embed/${id}"></iframe><p class="hint">Карточка может быть недоступна из-за настроек доступа или ограничений Garmin Connect. Если она не отображается, откройте тренировку по ссылке.</p><a href="https://connect.garmin.com/modern/activity/${id}" target="_blank" rel="noopener noreferrer">Открыть в Garmin Connect</a>`:input?'<p class="muted">Не удалось распознать тренировку. Проверьте ссылку Garmin Connect в редакторе.</p>':'<p class="muted">Ссылка на тренировку пока не добавлена.</p>';
+  return `<div id="trainingDashboard"><p class="muted">${trainingDates[selected]?'Загрузка тренировки…':'FIT-файл тренировки пока не добавлен.'}</p></div>`;
+}
+async function loadTraining(date){
+  if(!trainingDates[date])return null;
+  if(!trainingCache.has(date))trainingCache.set(date,request('training',undefined,{date}).then(result=>result.training));
+  try{return await trainingCache.get(date)}catch(error){trainingCache.delete(date);throw error}
+}
+async function showTraining(date){
+  const target=$('trainingDashboard');if(!target)return;
+  try{const data=await loadTraining(date);if(target===$('trainingDashboard'))TrainingDashboard.mount(target,data)}
+  catch(error){if(target===$('trainingDashboard'))target.textContent=error.message;}
 }
 function parseWeight(value){
   const text=String(value??'').trim();
@@ -68,20 +60,21 @@ function weightHTML(date){
   const change=`${difference<0?'−':difference>0?'+':''}${fmt(Math.abs(difference))}`;
   return `${label} <span class="weight-change">(${change} кг)</span>`;
 }
-function renderReport(){const root=$('report'),e=entries[selected];if(!e){root.innerHTML=`<section class="card empty"><h2>${escapeHTML(prettyDate(selected))}</h2><p>На этот день запись пока не добавлена.</p>${isAdmin?'<button type="button" id="addEntry">Добавить запись</button>':''}</section>`;if($('addEntry'))$('addEntry').onclick=openEditor;return}const intake=e.meals.reduce((sum,m)=>sum+Number(m.kcal||0),0),out=Number(e.base||0)+Number(e.exercise||0),diff=out-intake;const groups=[...new Set(e.meals.map(m=>m.group))];const mealsHTML=groups.map(g=>`<section class="meal"><h3>${escapeHTML(g)}</h3>${e.meals.filter(m=>m.group===g).map(m=>`<div class="food-row"><span>${escapeHTML(m.name)}</span><span>${fmt(m.kcal)} ккал</span></div>`).join('')}</section>`).join('');root.innerHTML=`<article class="card report"><h2 class="date-title">${escapeHTML(prettyDate(selected))}</h2><p class="subtitle">Отчёт для нутрициолога${isAdmin&&!publication[selected]?' · Черновик':''}</p><div class="stats"><div class="stat"><small>Вес</small><strong>${weightHTML(selected)}</strong></div><div class="stat"><small>Сон</small><strong>${escapeHTML(e.sleep||'—')}</strong></div><div class="stat"><small>${diff>=0?'Дефицит':'Профицит'}</small><strong>${fmt(Math.abs(diff))} ккал</strong></div></div>${mealsHTML||'<p class="muted">Продукты не добавлены.</p>'}<section><h3>Итоги дня</h3><div class="totals"><div class="total-row"><span>Потреблено с пищей</span><span>${fmt(intake)} ккал</span></div><div class="total-row"><span>Базовый обмен веществ (по оценке)</span><span>${fmt(e.base||0)} ккал</span></div><div class="total-row"><span>Тренировка (расход по оценке)</span><span>${fmt(e.exercise||0)} ккал</span></div><div class="total-row"><span>Общий учтённый расход</span><span>${fmt(out)} ккал</span></div><div class="total-row"><span>Расчётный ${diff>=0?'дефицит':'профицит'}</span><span>${fmt(Math.abs(diff))} ккал</span></div></div><p class="hint">${escapeHTML(e.note||'Оценочные значения. Повседневная активность отдельно не учитывается.')}</p></section><hr class="section-divider"><section><h3>Тренировка за день</h3><div class="ride"><div class="ride-title">Велотренировка</div><p>Расход энергии (по оценке): <strong>${fmt(e.exercise||0)} ккал</strong></p>${trainingHTML(e)}</div></section></article>`}
+function renderReport(){TrainingDashboard.dispose();const root=$('report'),e=entries[selected];if(!e){root.innerHTML=`<section class="card empty"><h2>${escapeHTML(prettyDate(selected))}</h2><p>На этот день запись пока не добавлена.</p>${isAdmin?'<button type="button" id="addEntry">Добавить запись</button>':''}</section>`;if($('addEntry'))$('addEntry').onclick=openEditor;return}const intake=e.meals.reduce((sum,m)=>sum+Number(m.kcal||0),0),out=Number(e.base||0)+Number(e.exercise||0),diff=out-intake;const groups=[...new Set(e.meals.map(m=>m.group))];const mealsHTML=groups.map(g=>`<section class="meal"><h3>${escapeHTML(g)}</h3>${e.meals.filter(m=>m.group===g).map(m=>`<div class="food-row"><span>${escapeHTML(m.name)}</span><span>${fmt(m.kcal)} ккал</span></div>`).join('')}</section>`).join('');root.innerHTML=`<article class="card report"><h2 class="date-title">${escapeHTML(prettyDate(selected))}</h2><p class="subtitle">Отчёт для нутрициолога${isAdmin&&!publication[selected]?' · Черновик':''}</p><div class="stats"><div class="stat"><small>Вес</small><strong>${weightHTML(selected)}</strong></div><div class="stat"><small>Сон</small><strong>${escapeHTML(e.sleep||'—')}</strong></div><div class="stat"><small>${diff>=0?'Дефицит':'Профицит'}</small><strong>${fmt(Math.abs(diff))} ккал</strong></div></div>${mealsHTML||'<p class="muted">Продукты не добавлены.</p>'}<section><h3>Итоги дня</h3><div class="totals"><div class="total-row"><span>Потреблено с пищей</span><span>${fmt(intake)} ккал</span></div><div class="total-row"><span>Базовый обмен веществ (по оценке)</span><span>${fmt(e.base||0)} ккал</span></div><div class="total-row"><span>Тренировка (расход по оценке)</span><span>${fmt(e.exercise||0)} ккал</span></div><div class="total-row"><span>Общий учтённый расход</span><span>${fmt(out)} ккал</span></div><div class="total-row"><span>Расчётный ${diff>=0?'дефицит':'профицит'}</span><span>${fmt(Math.abs(diff))} ккал</span></div></div><p class="hint">${escapeHTML(e.note||'Оценочные значения. Повседневная активность отдельно не учитывается.')}</p></section><hr class="section-divider"><section><h3>Тренировка за день</h3><div class="ride"><div class="ride-title">Велотренировка</div><p>Расход энергии (по оценке): <strong>${fmt(e.exercise||0)} ккал</strong></p>${trainingHTML(e)}</div></section></article>`;showTraining(selected)}
 function render(){if(!isDiaryDate(selected))selected=START_DATE;renderCalendar();renderReport()}
-function openEditor(){if(!isAdmin)return;if(!isDiaryDate(selected)){showStatus('Записи доступны с 7 ноября 2026 года.',true);return;}editingRevisions={...revisions};$('publishedInput').checked=publication[selected]??true;const e=entries[selected]||{weight:'',sleep:'',base:2000,exercise:0,meals:[],garmin:'',note:''};$('dateInput').value=selected;$('weightInput').value=e.weight;$('sleepInput').value=e.sleep;$('baseInput').value=e.base;$('exerciseInput').value=e.exercise;$('mealsInput').value=e.meals.map(m=>`${m.group} | ${m.name} | ${m.kcal}`).join('\n');$('garminInput').value=savedGarmin(e);$('noteInput').value=e.note;$('deleteBtn').disabled=!entries[selected];$('editor').showModal()}
-$('entryForm').addEventListener('submit',async event=>{event.preventDefault();if(!isAdmin)return;const date=$('dateInput').value;if(!isDiaryDate(date)){showStatus('Нельзя создавать или редактировать записи ранее 7 ноября 2026 года.',true);return;}const meals=[];for(const [index,line] of $('mealsInput').value.split('\n').entries()){if(!line.trim())continue;const parts=line.split('|').map(s=>s.trim());if(parts.length!==3||!parts[0]||!parts[1]||!/^(\d+)([.,]\d+)?$/.test(parts[2])){alert(`Ошибка в строке ${index+1}: используйте «Приём пищи | Название | ккал».`);return}meals.push({group:parts[0],name:parts[1],kcal:Number(parts[2].replace(',','.'))})}const entry={...entries[date],weight:$('weightInput').value.trim(),sleep:$('sleepInput').value.trim(),base:Number($('baseInput').value||0),exercise:Number($('exerciseInput').value||0),meals,garmin:$('garminInput').value.trim(),note:$('noteInput').value.trim()};const button=event.submitter;button.disabled=true;try{await request('save',{date,entry,published:$('publishedInput').checked,revision:editingRevisions[date]??null});selected=date;const [y,m]=date.split('-').map(Number);shownYear=y;shownMonth=m-1;await loadEntries();$('editor').close();showStatus('Запись сохранена.');}catch(error){showStatus(error.message,true);}finally{button.disabled=false;}});
+async function openEditor(){if(!isAdmin)return;if(!isDiaryDate(selected)){showStatus('Записи доступны с 7 ноября 2026 года.',true);return;}editingRevisions={...revisions};$('publishedInput').checked=publication[selected]??true;const e=entries[selected]||{weight:'',sleep:'',base:2000,exercise:0,meals:[],garmin:'',note:''};$('dateInput').value=selected;$('weightInput').value=e.weight;$('sleepInput').value=e.sleep;$('baseInput').value=e.base;$('exerciseInput').value=e.exercise;$('mealsInput').value=e.meals.map(m=>`${m.group} | ${m.name} | ${m.kcal}`).join('\n');$('noteInput').value=e.note;$('deleteBtn').disabled=!entries[selected];$('editor').showModal();cancelFit();const generation=fitGeneration;editorTraining=null;editorTrainingLoaded=false;$('fitFileInput').value='';$('fitStatus').textContent='Загрузка тренировки…';$('entryForm').querySelector('button[type=submit]').disabled=true;try{const loaded=await loadTraining(selected);if(generation===fitGeneration&&$('editor').open){editorTraining=loaded;editorTrainingLoaded=true;TrainingDashboard.mount($('fitPreview'),editorTraining);$('fitStatus').textContent=e.garmin||e.strava?'Прежняя ссылка Garmin сохранена в записи; вместо карточки можно загрузить FIT.':'';}}catch(error){if(generation===fitGeneration)$('fitStatus').textContent=error.message;}finally{if(generation===fitGeneration)$('entryForm').querySelector('button[type=submit]').disabled=!editorTrainingLoaded;}}
+$('entryForm').addEventListener('submit',async event=>{event.preventDefault();if(!isAdmin||!editorTrainingLoaded)return;const date=$('dateInput').value;if(!isDiaryDate(date)){showStatus('Нельзя создавать или редактировать записи ранее 7 ноября 2026 года.',true);return;}const meals=[];for(const [index,line] of $('mealsInput').value.split('\n').entries()){if(!line.trim())continue;const parts=line.split('|').map(s=>s.trim());if(parts.length!==3||!parts[0]||!parts[1]||!/^(\d+)([.,]\d+)?$/.test(parts[2])){alert(`Ошибка в строке ${index+1}: используйте «Приём пищи | Название | ккал».`);return}meals.push({group:parts[0],name:parts[1],kcal:Number(parts[2].replace(',','.'))})}const entry={...entries[date],weight:$('weightInput').value.trim(),sleep:$('sleepInput').value.trim(),base:Number($('baseInput').value||0),exercise:Number($('exerciseInput').value||0),meals,note:$('noteInput').value.trim()};const button=event.submitter;button.disabled=true;try{await request('save',{date,entry,training:editorTraining,published:$('publishedInput').checked,revision:editingRevisions[date]??null});selected=date;const [y,m]=date.split('-').map(Number);shownYear=y;shownMonth=m-1;await loadEntries();$('editor').close();showStatus('Запись сохранена.');}catch(error){showStatus(error.message,true);}finally{button.disabled=false;}});
 $('deleteBtn').onclick=async()=>{if(!isAdmin||!confirm('Удалить запись за выбранную дату?'))return;const button=$('deleteBtn');button.disabled=true;try{await request('delete',{date:selected,revision:editingRevisions[selected]??null});await loadEntries();$('editor').close();showStatus('Запись удалена.');}catch(error){showStatus(error.message,true);}finally{button.disabled=false;}};
 $('editBtn').onclick=openEditor;$('closeEditor').onclick=()=>$('editor').close();$('prev').onclick=()=>{shownMonth--;if(shownMonth<0){shownMonth=11;shownYear--}renderCalendar()};$('next').onclick=()=>{shownMonth++;if(shownMonth>11){shownMonth=0;shownYear++}renderCalendar()};
 function showStatus(message,error=false){$('appStatus').textContent=message;$('appStatus').classList.toggle('status-error',error)}
 function updateAccess(){
   $('editBtn').hidden=!isAdmin;$('logoutBtn').hidden=!isAdmin;$('loginBtn').hidden=isAdmin;$('migrationPanel').hidden=!isAdmin;
 }
-async function request(action,data){
+async function request(action,data,params={},asBlob=false){
   let response;
-  try{response=await fetch(`api/index.php?action=${encodeURIComponent(action)}`,{method:data?'POST':'GET',credentials:'same-origin',cache:'no-store',headers:data?{'Content-Type':'application/json','X-CSRF-Token':csrf}:{},body:data?JSON.stringify(data):undefined})}
+  try{response=await fetch('api/index.php?'+new URLSearchParams({action,...params}),{method:data?'POST':'GET',credentials:'same-origin',cache:'no-store',headers:data?{'Content-Type':'application/json','X-CSRF-Token':csrf}:{},body:data?JSON.stringify(data):undefined})}
   catch{throw new Error('Не удалось связаться с сервером. Проверьте соединение и состояние записи перед повторным сохранением.')}
+  if(asBlob&&response.ok)return response.blob();
   let result;try{result=await response.json()}catch{throw new Error('Сервер вернул некорректный ответ. Проверьте настройку PHP.')}
   if(!response.ok){
     if(response.status===401&&action!=='login'){isAdmin=false;updateAccess();$('editor').close();entries={};revisions={};publication={};render();}
@@ -90,7 +83,7 @@ async function request(action,data){
   if(result.csrf)csrf=result.csrf;
   return result;
 }
-async function loadEntries(){const result=await request('entries');entries=result.entries;revisions=result.revisions;publication=result.published;render()}
+async function loadEntries(){const result=await request('entries');entries=result.entries;revisions=result.revisions;publication=result.published;trainingDates=result.trainingDates||{};trainingCache.clear();render()}
 $('loginBtn').onclick=()=>{$('loginError').textContent='';$('loginDialog').showModal()};
 $('closeLogin').onclick=()=>$('loginDialog').close();
 $('loginForm').onsubmit=async event=>{
@@ -99,8 +92,8 @@ $('loginForm').onsubmit=async event=>{
   catch(error){$('loginError').textContent=error.message;}finally{button.disabled=false;}
 };
 $('logoutBtn').onclick=async()=>{try{await request('logout',{});isAdmin=false;updateAccess();$('editor').close();entries={};render();await loadEntries();showStatus('Вы вышли из аккаунта.');}catch(error){showStatus(error.message,true)}};
-function downloadJSON(data,name){const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
-$('exportBtn').onclick=async()=>{try{downloadJSON(await request('export'),'nutrition-diary-database.json');showStatus('Резервная копия базы сохранена.')}catch(error){showStatus(error.message,true)}};
+function downloadBlob(blob,name){const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
+$('exportBtn').onclick=async()=>{try{downloadBlob(await request('export',undefined,{},true),'nutrition-diary-database.json');showStatus('Резервная копия базы сохранена.')}catch(error){showStatus(error.message,true)}};
 $('importBtn').onclick=()=>$('importFile').click();
 $('importFile').onchange=async()=>{
   const file=$('importFile').files[0];if(!file)return;
@@ -112,9 +105,27 @@ $('importFile').onchange=async()=>{
     const imported=parsed?.entries??parsed;
     if(!imported||typeof imported!=='object'||Array.isArray(imported))throw new Error('Ожидается JSON-объект с записями по датам.');
     if(!confirm(`Добавить записи из файла (${Object.keys(imported).length} дат) как черновики? Совпадающие даты будут пропущены.`))return;
-    const result=await request('import',{entries:imported});await loadEntries();showStatus(`Добавлено черновиков: ${result.added}. Пропущено существующих дат: ${result.skipped.length}${result.skipped.length?' ('+result.skipped.join(', ')+')':''}.`);
+    const result=await request('import',{entries:imported,training:parsed?.training??{}});await loadEntries();showStatus(`Добавлено черновиков: ${result.added}. Пропущено существующих дат: ${result.skipped.length}${result.skipped.length?' ('+result.skipped.join(', ')+')':''}.`);
   }catch(error){showStatus(error.message,true)}finally{$('importFile').value='';}
 };
+function cancelFit(){fitGeneration++;if(fitReject){fitReject(Error('Чтение отменено.'));fitReject=null;}if(fitWorker){fitWorker.terminate();fitWorker=null;}}
+$('editor').addEventListener('close',cancelFit);
+$('fitFileInput').onchange=async()=>{
+  const file=$('fitFileInput').files[0];if(!file)return;
+  cancelFit();const generation=fitGeneration;
+  if(!/\.fit$/i.test(file.name)||file.size<14||file.size>10*1024*1024){$('fitStatus').textContent='Выберите FIT-файл размером до 10 МБ.';return;}
+  const save=$('entryForm').querySelector('button[type=submit]');save.disabled=true;$('fitStatus').textContent='Чтение FIT-файла…';
+  let timer;
+  try{
+    const bytes=await file.arrayBuffer();if(generation!==fitGeneration)return;
+    const worker=new Worker('fit-worker.js?v=1');fitWorker=worker;
+    const training=await new Promise((resolve,reject)=>{fitReject=reject;timer=setTimeout(()=>reject(Error('Чтение заняло слишком много времени.')),30000);worker.onmessage=event=>event.data.error?reject(Error(event.data.error)):resolve(event.data.training);worker.onerror=()=>reject(Error('Не удалось запустить обработчик FIT. Проверьте файлы сайта и CSP.'));worker.postMessage(bytes,[bytes]);});
+    if(generation!==fitGeneration)return;
+    editorTraining=training;editorTrainingLoaded=true;TrainingDashboard.mount($('fitPreview'),training);$('fitStatus').textContent=`Готово: ${training.samples.length.toLocaleString('ru-RU')} измерений. Нажмите «Сохранить»; исходный FIT и GPS не отправляются на сервер.`;
+  }catch(error){if(generation===fitGeneration)$('fitStatus').textContent=error.message;}
+  finally{clearTimeout(timer);if(generation===fitGeneration){if(fitWorker)fitWorker.terminate();fitWorker=null;fitReject=null;save.disabled=!editorTrainingLoaded;}}
+};
+$('removeFitBtn').onclick=()=>{cancelFit();editorTraining=null;editorTrainingLoaded=true;$('fitFileInput').value='';TrainingDashboard.mount($('fitPreview'),null);$('fitStatus').textContent='Тренировка будет удалена после сохранения записи.';$('entryForm').querySelector('button[type=submit]').disabled=false;};
 async function initialize(){
   try{const session=await request('session');isAdmin=session.admin;updateAccess();await loadEntries();showStatus('');}
   catch(error){showStatus(error.message,true);$('report').innerHTML='<section class="card empty"><p>Записи не загружены. Обновите страницу после проверки соединения и настройки сервера.</p></section>';}

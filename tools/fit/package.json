@@ -1,0 +1,11 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "fit-file-parser": "6.2.7",
+    "esbuild": "0.28.2"
+  }
+}

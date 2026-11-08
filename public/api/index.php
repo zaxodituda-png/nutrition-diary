@@ -12,7 +12,7 @@ try {
     $action = $_GET['action'] ?? 'entries';
     $method = $_SERVER['REQUEST_METHOD'];
     if (!is_string($action)) fail('Неизвестный запрос.', 404);
-    $reads = ['session', 'entries', 'export'];
+    $reads = ['session', 'entries', 'export', 'training'];
     $writes = ['login', 'logout', 'setup', 'save', 'delete', 'import'];
     if (!in_array($action, array_merge($reads, $writes), true)) fail('Неизвестный запрос.', 404);
     if (in_array($action, $reads, true) && $method !== 'GET') fail('Метод не разрешён.', 405);
@@ -67,6 +67,16 @@ try {
         $_SESSION['csrf'] = bin2hex(random_bytes(32));
         respond(['admin' => false, 'csrf' => $_SESSION['csrf']]);
     }
+    if ($action === 'training') {
+        $date = $_GET['date'] ?? '';
+        if (!validDate($date)) fail('Некорректная дата.', 422);
+        $admin = adminId();
+        $stmt = db()->prepare('SELECT t.data FROM training_sessions t JOIN diary_entries e ON e.entry_date = t.entry_date WHERE e.entry_date = ? AND e.deleted_at IS NULL' . ($admin ? '' : ' AND e.published = 1'));
+        $stmt->execute([$date]);
+        $row = $stmt->fetch();
+        if (!$row) fail('Тренировка не найдена.', 404);
+        respond(['training' => json_decode($row['data'], true, 64, JSON_THROW_ON_ERROR)]);
+    }
     if ($action === 'entries' || $action === 'export') {
         $admin = $action === 'export' ? requireAdmin() : adminId();
         $stmt = db()->query('SELECT entry_date, payload, published, revision FROM diary_entries WHERE deleted_at IS NULL' . ($admin ? '' : ' AND published = 1') . ' ORDER BY entry_date');
@@ -84,9 +94,22 @@ try {
         }
         if ($action === 'export') {
             header('Content-Disposition: attachment; filename="nutrition-diary-export.json"');
-            respond(['format' => 'nutrition-diary', 'version' => 1, 'exportedAt' => gmdate('c'), 'entries' => (object) $entries, 'published' => (object) $published]);
+            // Stream stored training JSON instead of expanding every activity into PHP arrays.
+            echo '{"format":"nutrition-diary","version":1,"exportedAt":' . json_encode(gmdate('c')) . ',"entries":' . json_encode((object) $entries, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR) . ',"published":' . json_encode((object) $published) . ',"training":{';
+            db()->setAttribute(PDO::MYSQL_ATTR_USE_BUFFERED_QUERY, false);
+            $query = db()->query('SELECT t.entry_date, t.data FROM training_sessions t JOIN diary_entries e ON e.entry_date = t.entry_date WHERE e.deleted_at IS NULL ORDER BY t.entry_date');
+            $separator = '';
+            foreach ($query as $item) {
+                echo $separator . json_encode($item['entry_date']) . ':' . $item['data'];
+                $separator = ',';
+            }
+            echo '}}';
+            exit;
         }
-        respond(['entries' => (object) $entries, 'revisions' => (object) $revisions, 'published' => (object) $published]);
+        $training = [];
+        $query = db()->query('SELECT t.entry_date FROM training_sessions t JOIN diary_entries e ON e.entry_date = t.entry_date WHERE e.deleted_at IS NULL' . ($admin ? '' : ' AND e.published = 1'));
+        foreach ($query as $item) $training[$item['entry_date']] = true;
+        respond(['entries' => (object) $entries, 'revisions' => (object) $revisions, 'published' => (object) $published, 'trainingDates' => (object) $training]);
     }
     $admin = requireAdmin(); // Every remaining route mutates diary data.
     $data = body();
@@ -99,12 +122,19 @@ try {
             requireDiaryDate($date);
             $validated[$date] = validateEntry($entry);
         }
+        $importTraining = $data['training'] ?? [];
+        if (!is_array($importTraining) || array_diff(array_keys($importTraining), array_keys($validated))) fail('Тренировки должны соответствовать импортируемым датам.', 422);
+        foreach ($importTraining as $date => $training) $importTraining[$date] = validateTraining($training);
         $pdo = db();
         $pdo->beginTransaction();
         $insert = $pdo->prepare('INSERT INTO diary_entries (entry_date, payload, published) VALUES (?, ?, 0)');
         $added = 0; $skipped = [];
         foreach ($validated as $date => $entry) {
-            try { $insert->execute([$date, encodeEntry($entry)]); $added++; }
+            try {
+                $insert->execute([$date, encodeEntry($entry)]);
+                if (isset($importTraining[$date])) storeTraining($pdo, $date, $importTraining[$date]);
+                $added++;
+            }
             catch (PDOException $e) {
                 if ((int) ($e->errorInfo[1] ?? 0) !== 1062) throw $e;
                 $skipped[] = $date; // Includes soft-deleted dates: never replace existing data.
@@ -120,6 +150,8 @@ try {
     if ($expected !== null && (!is_int($expected) || $expected < 1)) fail('Некорректная версия записи.', 422);
     $entry = $action === 'save' ? validateEntry($data['entry'] ?? null) : null;
     if ($action === 'save' && !is_bool($data['published'] ?? null)) fail('Укажите статус публикации.', 422);
+    $hasTraining = $action === 'save' && array_key_exists('training', $data);
+    $training = $hasTraining ? validateTraining($data['training']) : null;
     $pdo = db();
     $pdo->beginTransaction();
     $stmt = $pdo->prepare('SELECT * FROM diary_entries WHERE entry_date = ? FOR UPDATE');
@@ -148,6 +180,7 @@ try {
             $stmt = $pdo->prepare('INSERT INTO diary_entries (payload, published, entry_date) VALUES (?, ?, ?)');
         }
         $stmt->execute([encodeEntry($entry), (int) $data['published'], $date]);
+        if ($hasTraining || $restoring) storeTraining($pdo, $date, $training);
     }
     $pdo->commit();
     respond(['ok' => true]);

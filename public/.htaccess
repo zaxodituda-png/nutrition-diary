@@ -4,7 +4,7 @@ DirectoryIndex index.html
     Header always set X-Content-Type-Options "nosniff"
     Header always set Referrer-Policy "strict-origin-when-cross-origin"
     Header always set X-Frame-Options "DENY"
-    Header always set Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src https://connect.garmin.com; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'"
+    Header always set Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'none'; worker-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'"
     <FilesMatch "\.(html|js|css)$">
         Header always set Cache-Control "no-cache"
     </FilesMatch>
