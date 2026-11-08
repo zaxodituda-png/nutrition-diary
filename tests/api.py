@@ -53,6 +53,11 @@ admin.call('save',payload,status=403,csrf=False)
 admin.call('save',payload,status=403,origin='https://attacker.example')
 admin.call('save',payload,status=405,method='GET')
 admin.call('save',{**payload,'date':'2026-02-30'},status=422)
+for date in ['2026-11-06', '2026-10-31', '2025-12-31']:
+    admin.call('save',{**payload,'date':date},status=422)
+    admin.call('delete',{'date':date,'revision':1},status=422)
+    admin.call('import',{'entries':{'2026-11-30':entry,date:entry}},status=422)
+assert '2026-11-30' not in admin.call('entries')['entries']
 admin.call('save',payload)
 assert visitor.call('entries')['entries']['2026-11-07']['weight']=='75,5'
 assert 'custom' not in visitor.call('entries')['entries']['2026-11-07']
@@ -61,13 +66,13 @@ admin.call('save',{**payload,'entry':{**entry,'weight':'75'},'revision':1,'publi
 assert visitor.call('entries')['entries']=={}
 assert admin.call('entries')['entries']['2026-11-07']['custom']==entry['custom']
 admin.call('save',{**payload,'revision':1},status=409)
-imp = {'2026-11-07':{**entry,'weight':'1'},'2026-11-05':{**entry,'weight':'76'},'2026-11-09':{**entry,'weight':'75'}}
+imp = {'2026-11-07':{**entry,'weight':'1'},'2026-11-10':{**entry,'weight':'76'},'2026-11-09':{**entry,'weight':'75'}}
 result = admin.call('import',{'entries':imp});assert result['added']==2;assert result['skipped']==['2026-11-07']
 result = admin.call('import',{'entries':imp});assert result['added']==0
 assert visitor.call('entries')['entries']=={}
 backup=admin.call('export');assert len(backup['entries'])==3;assert backup['entries']['2026-11-07']['weight']=='75';assert backup['entries']['2026-11-07']['training']==entry['training']
-admin.call('import',{'entries':{'2026-11-01':entry,'2026-11-02':{'meals':'invalid'}}},status=422)
-assert '2026-11-01' not in admin.call('entries')['entries']
+admin.call('import',{'entries':{'2026-11-11':entry,'2026-11-12':{'meals':'invalid'}}},status=422)
+assert '2026-11-11' not in admin.call('entries')['entries']
 admin.call('save',{**payload,'entry':{**entry,'weight':'75'},'published':True,'revision':2})
 admin.call('delete',{'date':'2026-11-09','revision':1})
 result=admin.call('import',{'entries':{'2026-11-09':entry}});assert result['added']==0

@@ -1,6 +1,11 @@
 <?php
 declare(strict_types=1);
 const MAX_BODY = 10485760;
+const DIARY_START_DATE = '2026-11-07';
+
+function requireDiaryDate(string $date): void {
+    if ($date < DIARY_START_DATE) fail('Записи доступны с 7 ноября 2026 года. Более ранние данные сохранены без изменений.', 422);
+}
 
 function config(): array {
     static $config;

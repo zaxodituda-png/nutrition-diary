@@ -96,6 +96,7 @@ try {
         $validated = [];
         foreach ($import as $date => $entry) {
             if (!validDate($date)) fail('Некорректная дата в файле.', 422);
+            requireDiaryDate($date);
             $validated[$date] = validateEntry($entry);
         }
         $pdo = db();
@@ -114,6 +115,7 @@ try {
     }
     $date = $data['date'] ?? '';
     if (!validDate($date)) fail('Некорректная дата.', 422);
+    requireDiaryDate($date);
     $expected = $data['revision'] ?? null;
     if ($expected !== null && (!is_int($expected) || $expected < 1)) fail('Некорректная версия записи.', 422);
     $entry = $action === 'save' ? validateEntry($data['entry'] ?? null) : null;
