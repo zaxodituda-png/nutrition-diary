@@ -2,6 +2,7 @@
 declare(strict_types=1);
 const MAX_BODY = 10485760;
 const DIARY_START_DATE = '2026-11-07';
+require_once __DIR__ . '/training.php';
 
 function requireDiaryDate(string $date): void {
     if ($date < DIARY_START_DATE) fail('Записи доступны с 7 ноября 2026 года. Более ранние данные сохранены без изменений.', 422);
@@ -133,6 +134,7 @@ function encodeEntry(array $entry): string { return json_encode($entry, JSON_UNE
 function archiveEntry(PDO $pdo, array $row, string $action, int $admin): void {
     $stmt = $pdo->prepare('INSERT INTO entry_history (entry_date, revision, payload, published, action, admin_id) VALUES (?, ?, ?, ?, ?, ?)');
     $stmt->execute([$row['entry_date'], $row['revision'], $row['payload'], $row['published'], $action, $admin]);
+    archiveTraining($pdo, $row['entry_date'], (int) $row['revision']);
 }
 function throttle(): void {
     // Ignore X-Forwarded-For: a visitor must not choose their rate-limit bucket.

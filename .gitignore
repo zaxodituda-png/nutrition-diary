@@ -7,3 +7,8 @@
 .env.*
 *.sql.gz
 /vendor/
+
+# Never commit private activity recordings or uploads.
+*.[fF][iI][tT]
+/uploads/
+node_modules/
