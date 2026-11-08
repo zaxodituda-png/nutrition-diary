@@ -9,7 +9,7 @@ const prettyDate=key=>new Intl.DateTimeFormat('ru-RU',{weekday:'long',day:'numer
 function persist(){localStorage.setItem(KEY,JSON.stringify(entries))}
 function renderCalendar(){ $('monthLabel').textContent=new Intl.DateTimeFormat('ru-RU',{month:'long',year:'numeric'}).format(new Date(shownYear,shownMonth,1));const grid=$('calendarGrid');grid.replaceChildren();for(const label of ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']){const el=document.createElement('div');el.className='weekday';el.textContent=label;grid.append(el)}const offset=(new Date(shownYear,shownMonth,1).getDay()+6)%7;for(let i=0;i<offset;i++)grid.append(document.createElement('div'));const count=new Date(shownYear,shownMonth+1,0).getDate();for(let d=1;d<=count;d++){const key=dateKey(shownYear,shownMonth,d),b=document.createElement('button');b.type='button';b.className='day'+(selected===key?' active':'')+(entries[key]?' has-entry':'');b.textContent=d;b.setAttribute('aria-label',prettyDate(key)+(entries[key]?', есть запись':''));b.setAttribute('aria-pressed',String(selected===key));b.onclick=()=>{selected=key;render()};grid.append(b)}}
 // Read pasted markup in an inert document; only a validated numeric ID is rendered.
-function stravaActivity(input){
+function trainingActivity(input){
   let source=String(input||'').trim();
   if(!source)return null;
   if(source.startsWith('<')){
@@ -19,28 +19,38 @@ function stravaActivity(input){
     else {
       const placeholder=doc.querySelector('.strava-embed-placeholder[data-embed-type="activity"]');
       const id=placeholder?.getAttribute('data-embed-id');
-      return /^[1-9]\d*$/.test(id||'')?id:null;
+      return /^[1-9]\d*$/.test(id||'')?activityDetails('strava',id):null;
     }
   }
   try{
     const url=new URL(source);
     if(url.protocol!=='https:'||url.username||url.password||url.port)return null;
-    let match;
+    let match,provider='strava';
     if(['strava.com','www.strava.com','embed.strava.com'].includes(url.hostname)){
       match=url.pathname.match(/^\/activities\/([1-9]\d*)(?:\/embed(?:\/[a-zA-Z0-9_-]+)?)?\/?$/);
     }else if(url.hostname==='strava-embeds.com'){
       match=url.pathname.match(/^\/activity\/([1-9]\d*)\/?$/);
     }
-    return match?match[1]:null;
+    else if(url.hostname==='connect.garmin.com'){
+      provider='garmin';
+      match=url.pathname.match(/^\/modern\/activity\/(?:embed\/)?([1-9]\d*)\/?$/);
+    }
+    return match?activityDetails(provider,match[1]):null;
   }catch{return null}
+}
+function activityDetails(provider,id){
+  return provider==='garmin'
+    ?{provider,id,name:'Garmin Connect',embed:`https://connect.garmin.com/modern/activity/embed/${id}`,url:`https://connect.garmin.com/modern/activity/${id}`}
+    :{provider,id,name:'Strava',embed:`https://strava-embeds.com/activity/${id}?style=standard`,url:`https://www.strava.com/activities/${id}`};
 }
 function trainingHTML(entry){
   const training=entry.training||{};
   const number=value=>value!==undefined&&value!==''&&Number.isFinite(Number(String(value).replace(',','.')))?fmt(Number(String(value).replace(',','.'))):'—';
   const metrics=[['Дистанция (км)',number(training.distance)],['Время тренировки (ч:мин:сек)',training.movingTime||'—'],['Средняя мощность (Вт)',number(training.power)],['Средний пульс (уд/мин)',number(training.heartRate)]];
   const grid=`<dl class="training-metrics">${metrics.map(([label,value])=>`<div><dt>${label}</dt><dd>${escapeHTML(value)}</dd></div>`).join('')}</dl>`;
-  const id=stravaActivity(entry.strava);
-  const activity=id?`<iframe loading="lazy" title="Активность Strava" referrerpolicy="strict-origin-when-cross-origin" src="https://strava-embeds.com/activity/${id}?style=standard"></iframe><p class="hint">Если карточка не отображается, откройте активность по ссылке.</p><a href="https://www.strava.com/activities/${id}" target="_blank" rel="noopener noreferrer">Открыть в Strava</a>`:entry.strava?'<p class="muted">Не удалось распознать активность Strava. Проверьте ссылку или код в редакторе.</p>':'<p class="muted">Активность Strava пока не добавлена.</p>';
+  // Keep the existing storage field so older Strava entries need no migration.
+  const details=trainingActivity(entry.strava);
+  const activity=details?`<iframe loading="lazy" title="Активность ${details.name}" referrerpolicy="strict-origin-when-cross-origin" src="${details.embed}"></iframe><p class="hint">Карточка может быть недоступна из-за настроек доступа или ограничений ${details.name}. Если она не отображается, откройте тренировку по ссылке.</p><a href="${details.url}" target="_blank" rel="noopener noreferrer">Открыть в ${details.name}</a>`:entry.strava?'<p class="muted">Не удалось распознать тренировку. Используйте ссылку или официальный код встраивания Strava или Garmin Connect.</p>':'<p class="muted">Ссылка на тренировку пока не добавлена.</p>';
   return grid+activity;
 }
 function parseWeight(value){
