@@ -1,0 +1,6 @@
+# Defense in depth only. Set the domain DocumentRoot to public/.
+Options -Indexes
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteRule ^(?:private|tests|\.git)(?:/|$) - [F,L]
+</IfModule>

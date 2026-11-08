@@ -1,0 +1,9 @@
+/private/config.php
+/private/*.json
+!/private/legacy-example.json
+/private/backups/
+*.log
+.env
+.env.*
+*.sql.gz
+/vendor/

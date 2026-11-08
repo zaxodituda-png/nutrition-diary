@@ -3,3 +3,5 @@
 .stat .weight-change{font-size:.75em;font-weight:400;color:#76889a;white-space:nowrap}
 
 .ride iframe{height:600px}.ride .hint{margin-bottom:8px}
+
+[hidden]{display:none!important}.account-actions{display:flex;flex-wrap:wrap;gap:8px}.migration-panel{padding:20px;margin-top:24px}.publish-option{display:flex;align-items:center;gap:8px}.publish-option input{display:inline-block;width:auto;margin:0}.status-error{color:#a52f3b}.account-actions button{font-size:13px}
