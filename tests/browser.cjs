@@ -2,7 +2,7 @@
 const {chromium}=require('playwright');const assert=require('node:assert/strict');
 (async()=>{const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||'/usr/bin/chromium',args:['--no-sandbox']});
 const context=await browser.newContext();const page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.route('https://connect.garmin.com/**',r=>r.abort());
-await page.goto(process.env.DIARY_TEST_URL||'http://127.0.0.1:8780');await page.waitForSelector('.report');
+await page.clock.install({time:new Date('2026-11-07T12:00:00Z')});await page.goto(process.env.DIARY_TEST_URL||'http://127.0.0.1:8780');await page.waitForSelector('.report');
 assert.equal(await page.locator('#exportLocalBtn').count(),0);assert.equal(await page.locator('#exportBtn').isVisible(),false);assert.equal(await page.locator('#importBtn').isVisible(),false);assert.equal(await page.locator('#editBtn').isVisible(),false);assert.equal(await page.locator('#migrationPanel').isVisible(),false);assert.equal(await page.locator('.stat strong').first().innerText(),'75 кг');
 assert.equal(await page.locator('#report img').count(),0);assert.ok((await page.locator('#report').innerText()).includes('<img src=x onerror=alert(1)>'));
 const local={'2026-11-01':{weight:'1',meals:[],base:0,exercise:0,sleep:'',note:''}};
