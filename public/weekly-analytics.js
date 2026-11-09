@@ -49,16 +49,19 @@
   }
   function create(container,options={}){
     const now=options.now||(()=>new Date());let entries={},summaries={},timer,day=localDateKey(now());
-    container.innerHTML='<h3 class="weekly-total-title">Общее</h3><dl class="weekly-totals"></dl>';
+    container.innerHTML='<h2 class="weekly-toggle-heading"><button type="button" class="weekly-toggle" aria-expanded="false" aria-controls="weeklySummary"><span>Последние 7 дней</span><span class="weekly-chevron" aria-hidden="true"></span></button></h2><div id="weeklySummary" class="weekly-content" hidden><h3 class="weekly-total-title">Общее</h3><dl class="weekly-totals"></dl></div>';
+    const toggle=container.querySelector('.weekly-toggle'),content=container.querySelector('.weekly-content');
+    const toggleSummary=()=>{const expanded=toggle.getAttribute('aria-expanded')!=='true';toggle.setAttribute('aria-expanded',String(expanded));content.hidden=!expanded;};
+    toggle.addEventListener('click',toggleSummary);
     const cards=new Map();
-    for(const [id,label]of METRICS){const box=document.createElement('div');box.dataset.metric=id;const dt=document.createElement('dt'),dd=document.createElement('dd'),coverage=document.createElement('p');dt.textContent=label;coverage.className='hint weekly-coverage';box.append(dt,dd,coverage);container.querySelector('.weekly-totals').append(box);cards.set(id,{dd,coverage});}
+    for(const [id,label]of METRICS){const box=document.createElement('div');box.dataset.metric=id;const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=label;box.append(dt,dd);container.querySelector('.weekly-totals').append(box);cards.set(id,{dd});}
     function render(){
       const model=buildModel(entries,summaries,localDateKey(now()));container.dataset.windowStart=model.dates[0];container.dataset.windowEnd=model.dates[6];
-      for(const [id,card]of cards){const total=model.totals[id];card.dd.textContent=total.value===null?'—':format(id,total.value);card.coverage.textContent=total.count?'Данные за '+total.count+' из 7 дней':'Нет данных';card.dd.dataset.value=total.value===null?'':String(total.value);card.coverage.dataset.count=String(total.count);}
+      for(const [id,card]of cards){const total=model.totals[id];card.dd.textContent=total.value===null?'—':format(id,total.value);card.dd.dataset.value=total.value===null?'':String(total.value);}
     }
     function watch(){const next=localDateKey(now());if(next!==day){day=next;render();options.onDayChange?.();}clearTimeout(timer);const date=now(),midnight=new Date(date);midnight.setHours(24,0,0,50);timer=setTimeout(watch,Math.max(50,midnight-date));}
     root.addEventListener('focus',watch);const visible=()=>{if(!document.hidden)watch();};document.addEventListener('visibilitychange',visible);render();watch();
-    return {update(nextEntries,nextSummaries){entries=nextEntries;summaries=nextSummaries;render();},destroy(){clearTimeout(timer);root.removeEventListener('focus',watch);document.removeEventListener('visibilitychange',visible);}};
+    return {update(nextEntries,nextSummaries){entries=nextEntries;summaries=nextSummaries;render();},destroy(){toggle.removeEventListener('click',toggleSummary);clearTimeout(timer);root.removeEventListener('focus',watch);document.removeEventListener('visibilitychange',visible);}};
   }
   root.WeeklyAnalytics={METRICS,localDateKey,rollingDates,parseWeight:weight,parseSleep:sleep,deficit,buildModel,format,create};
 })(globalThis);
