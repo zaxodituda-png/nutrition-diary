@@ -15,10 +15,11 @@ const {chromium}=require('playwright');const assert=require('node:assert/strict'
   else if(action==='entries')data={entries:{'2026-11-07':entry},revisions:admin?{'2026-11-07':1}:{},published:admin?{'2026-11-07':true}:{},trainingDates:{'2026-11-07':true}};
   else if(action==='training')data={training};
   else if(action==='save'){saves++;throw Error('This presentation test must not save')}
+  else if(action==='training-summaries')data={trainingSummaries:{}};
   else throw Error('Unexpected endpoint '+action);
   return route.fulfill({json:data});
  });
- await page.goto(process.env.DIARY_TEST_URL||'http://127.0.0.1:8780');await page.waitForSelector('.ride .fit-canvas');
+ await page.clock.install({time:new Date('2026-11-07T12:00:00Z')});await page.goto(process.env.DIARY_TEST_URL||'http://127.0.0.1:8780');await page.waitForSelector('.ride .fit-canvas');
  assert.deepEqual(await page.locator('.ride .fit-metrics dt').allTextContents(),['Дистанция','Время движения','Средняя скорость','Максимальная скорость','Средний пульс','Максимальный пульс','Средняя мощность','Максимальная мощность']);
  assert.deepEqual(await page.locator('.ride .fit-metrics dd').allTextContents(),['55,6 км','1:39:04','36,3 км/ч','53,0 км/ч','145 уд/мин','175 уд/мин','218 Вт','720 Вт']);
  assert.ok((await page.locator('.ride').innerText()).includes('Активные калории (по оценке): 1 250 ккал'));assert.ok(!/[a-z]/i.test(await page.locator('.ride').innerText()));

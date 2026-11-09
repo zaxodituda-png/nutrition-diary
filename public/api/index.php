@@ -12,7 +12,7 @@ try {
     $action = $_GET['action'] ?? 'entries';
     $method = $_SERVER['REQUEST_METHOD'];
     if (!is_string($action)) fail('Неизвестный запрос.', 404);
-    $reads = ['session', 'entries', 'export', 'training'];
+    $reads = ['session', 'entries', 'export', 'training', 'training-summaries'];
     $writes = ['login', 'logout', 'setup', 'save', 'delete', 'import'];
     if (!in_array($action, array_merge($reads, $writes), true)) fail('Неизвестный запрос.', 404);
     if (in_array($action, $reads, true) && $method !== 'GET') fail('Метод не разрешён.', 405);
@@ -66,6 +66,31 @@ try {
         session_regenerate_id(true);
         $_SESSION['csrf'] = bin2hex(random_bytes(32));
         respond(['admin' => false, 'csrf' => $_SESSION['csrf']]);
+    }
+    if ($action === 'training-summaries') {
+        $end = $_GET['end'] ?? '';
+        if (!validDate($end)) fail('Укажите конечную дату в формате ГГГГ-ММ-ДД.', 422);
+        $date = DateTimeImmutable::createFromFormat('!Y-m-d', $end, new DateTimeZone('UTC'));
+        $start = $date->modify('-6 days')->format('Y-m-d');
+        $admin = adminId();
+        // Extract only scalars in SQL: no full FIT sample arrays are transferred to PHP/the browser.
+        $stmt = db()->prepare("SELECT t.entry_date,
+            CASE WHEN JSON_VALID(t.data) THEN JSON_EXTRACT(t.data, '$.version') END AS training_version,
+            CASE WHEN JSON_VALID(t.data) THEN JSON_EXTRACT(t.data, '$.summary.distanceKm') END AS distance,
+            CASE WHEN JSON_VALID(t.data) THEN JSON_EXTRACT(t.data, '$.summary.movingSeconds') END AS moving
+            FROM training_sessions t JOIN diary_entries e ON e.entry_date = t.entry_date
+            WHERE e.entry_date BETWEEN ? AND ? AND e.deleted_at IS NULL" . ($admin ? '' : ' AND e.published = 1') . ' ORDER BY e.entry_date');
+        $stmt->execute([max('1000-01-01', $start), $end]);
+        $summaries = [];
+        $scalar = static function ($raw, float $max): int|float|null {
+            $value = $raw === null ? null : json_decode($raw, true);
+            return (is_int($value) || is_float($value)) && is_finite((float) $value) && $value >= 0 && $value <= $max ? $value : null;
+        };
+        foreach ($stmt as $row) {
+            $version = json_decode($row['training_version'] ?? 'null', true);
+            $summaries[$row['entry_date']] = ['distanceKm' => $scalar($row['distance'], 100000), 'movingSeconds' => $version === 2 ? $scalar($row['moving'], 604800) : null];
+        }
+        respond(['start' => $start, 'end' => $end, 'trainingSummaries' => (object) $summaries]);
     }
     if ($action === 'training') {
         $date = $_GET['date'] ?? '';

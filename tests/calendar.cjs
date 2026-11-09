@@ -4,7 +4,7 @@ const {chromium}=require('playwright');const assert=require('node:assert/strict'
  const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||'/usr/bin/chromium',args:['--no-sandbox']});
  const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.route('https://connect.garmin.com/**',r=>r.abort());
- await page.goto(process.env.DIARY_TEST_URL||'http://127.0.0.1:8780');await page.waitForSelector('.report');
+ await page.clock.install({time:new Date('2026-11-07T12:00:00Z')});await page.goto(process.env.DIARY_TEST_URL||'http://127.0.0.1:8780');await page.waitForSelector('.report');
  const day=n=>page.locator('.day').filter({hasText:new RegExp(`^${n}$`)});
  const selected=()=>page.locator('.day.active').innerText();
  const navigate=async(id,count)=>{for(let i=0;i<count;i++)await page.locator('#'+id).click()};
